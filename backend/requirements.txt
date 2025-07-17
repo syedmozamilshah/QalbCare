@@ -1,0 +1,25 @@
+# Core FastAPI dependencies
+fastapi>=0.104.0,<0.115.0
+uvicorn[standard]>=0.24.0,<0.32.0
+python-dotenv>=1.0.0,<2.0.0
+pydantic>=2.5.0,<3.0.0
+
+# AI and ML dependencies
+google-generativeai>=0.3.0,<0.8.0
+langgraph>=0.0.26,<1.0.0
+sentence-transformers>=2.2.2,<3.0.0
+chromadb>=0.4.0,<0.6.0
+numpy>=1.24.0,<2.0.0
+
+# Data processing
+requests>=2.31.0,<3.0.0
+beautifulsoup4>=4.12.0,<5.0.0
+pdfplumber>=0.9.0,<1.0.0
+
+# Additional utilities
+aiofiles>=23.2.1,<25.0.0
+python-multipart>=0.0.6,<1.0.0
+
+# Enhanced error handling and logging
+requests-toolbelt>=1.0.0,<2.0.0
+colorama>=0.4.6,<1.0.0
