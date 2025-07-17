@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Calling Therapist - QalbCare</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <script>
+    const assistant = "9139da9d-c9d6-42ed-ade3-2f24d78a18ef";
+    const apiKey = "6795f565-c685-4b51-af99-e77da1d1e4ee";
+    (function (d, t) {
+      var g = document.createElement(t),
+        s = d.getElementsByTagName(t)[0];
+      g.src = "https://cdn.jsdelivr.net/gh/VapiAI/html-script-tag@latest/dist/assets/index.js";
+      g.defer = true;
+      g.async = true;
+      s.parentNode.insertBefore(g, s);
+      g.onload = function () {
+        window.vapiSDK.run({
+          apiKey: apiKey,
+          assistant: assistant
+        });
+      };
+    })(document, "script");
+  </script>
+  <style>
+    body {
+      margin: 0;
+      padding: 0;
+      background-color: #F8F7F2; /* Soft cream background */
+      font-family: 'Segoe UI', sans-serif;
+      color: #2D2D2D;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow-x: hidden; /* Remove horizontal scrolling */
+    }
+    .container {
+      background-color: #FFFFFF;
+      padding: 24px;
+      border-radius: 16px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      text-align: center;
+      width: 90%;
+      max-width: 350px;
+    }
+    .icon {
+      width: 80px;
+      height: 80px;
+      background-color: #E6E4DA;
+      border-radius: 50%;
+      margin: 0 auto 16px auto;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .icon span {
+      font-size: 36px;
+      color: #1F7A68; /* Primary green */
+    }
+    .button {
+      padding: 12px 24px;
+      background-color: #1F7A68; /* Primary green */
+      color: white;
+      font-weight: bold;
+      border-radius: 24px;
+      display: inline-block;
+      font-size: 16px;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+      cursor: pointer;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="icon">
+      <span>👨‍⚕️</span>
+    </div>
+    <h2 style="font-size: 22px; font-weight: 700; margin: 0 0 8px 0;">Calling Therapist</h2>
+    <p style="font-size: 16px; color: #6D6D6D; margin-bottom: 24px;">
+      Mustafa is on the line. Please speak freely from the heart by pressing the call button below.
+    </p>
+    <div class="button">
+      Live Voice Session
+    </div>
+  </div>
+</body>
+</html>
