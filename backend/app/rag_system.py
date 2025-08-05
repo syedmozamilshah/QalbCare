@@ -346,26 +346,67 @@ class RAGDocumentManager:
         """Ensure the Qdrant collection exists with proper configuration"""
         try:
             # Check if collection exists
-            collections = self.qdrant_client.get_collections()
-            collection_names = [c.name for c in collections.collections]
+            try:
+                collections = self.qdrant_client.get_collections()
+                collection_names = [c.name for c in collections.collections]
+            except Exception as e:
+                logger.warning(f"Failed to get collections list: {e}")
+                collection_names = []
             
             if self.collection_name not in collection_names:
                 logger.info(f"Creating Qdrant collection: {self.collection_name}")
                 
                 # Create collection with proper vector configuration
                 # We need to determine vector size from our embedding model
-                model = self._get_embedding_model()
+                # Use longer timeout for collection creation
+                model = self._get_embedding_model(timeout_sec=30)
                 test_embedding = model.encode("test").tolist() 
                 vector_size = len(test_embedding)
                 
-                self.qdrant_client.create_collection(
-                    collection_name=self.collection_name,
-                    vectors_config=VectorParams(
-                        size=vector_size,
-                        distance=Distance.COSINE
+                try:
+                    self.qdrant_client.create_collection(
+                        collection_name=self.collection_name,
+                        vectors_config=VectorParams(
+                            size=vector_size,
+                            distance=Distance.COSINE
+                        )
                     )
-                )
-                logger.info(f"Collection created with vector size: {vector_size}")
+                    logger.info(f"Collection '{self.collection_name}' created successfully with vector size: {vector_size}")
+                    
+                    # Verify collection was created
+                    import time
+                    time.sleep(1)  # Give Qdrant a moment to complete the operation
+                    
+                    collections = self.qdrant_client.get_collections()
+                    collection_names = [c.name for c in collections.collections]
+                    if self.collection_name not in collection_names:
+                        raise Exception("Collection creation may have failed - not found in collection list")
+                        
+                except Exception as create_error:
+                    logger.error(f"Failed to create collection: {create_error}")
+                    # Try to recreate if exists
+                    try:
+                        logger.info(f"Attempting to recreate collection {self.collection_name}")
+                        self.qdrant_client.recreate_collection(
+                            collection_name=self.collection_name,
+                            vectors_config=VectorParams(
+                                size=vector_size,
+                                distance=Distance.COSINE
+                            )
+                        )
+                        logger.info(f"Collection '{self.collection_name}' recreated successfully")
+                        
+                        # Verify recreation
+                        import time
+                        time.sleep(1)
+                        collections = self.qdrant_client.get_collections()
+                        collection_names = [c.name for c in collections.collections]
+                        if self.collection_name not in collection_names:
+                            raise Exception("Collection recreation failed - not found in collection list")
+                            
+                    except Exception as recreate_error:
+                        logger.error(f"Failed to recreate collection: {recreate_error}")
+                        raise recreate_error
             else:
                 logger.info(f"Collection {self.collection_name} already exists")
                 
