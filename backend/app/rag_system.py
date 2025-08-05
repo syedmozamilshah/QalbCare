@@ -7,13 +7,15 @@ from pathlib import Path
 import json
 import time
 import re
+import uuid
 
 try:
-    import chromadb
-    from chromadb.config import Settings
-    CHROMADB_AVAILABLE = True
+    from qdrant_client import QdrantClient
+    from qdrant_client.http import models
+    from qdrant_client.http.models import Distance, VectorParams, PointStruct
+    QDRANT_AVAILABLE = True
 except ImportError:
-    CHROMADB_AVAILABLE = False
+    QDRANT_AVAILABLE = False
 
 try:
     from sentence_transformers import SentenceTransformer
@@ -169,7 +171,7 @@ class SimpleRAGDocumentManager:
             return False
     
 class RAGDocumentManager:
-    """Manages documents, embeddings, and retrieval for Islamic mental health guidance"""
+    """Manages documents, embeddings, and retrieval for Islamic mental health guidance using Qdrant"""
     
     def __init__(self):
         # Initialize fallback manager as None first
@@ -177,37 +179,37 @@ class RAGDocumentManager:
         self.use_fallback = False
         
         # Always start with fallback mode to avoid crashes
-        if not CHROMADB_AVAILABLE or not TRANSFORMERS_AVAILABLE:
-            logger.warning("ChromaDB or Transformers not available, using simple fallback")
+        if not QDRANT_AVAILABLE or not TRANSFORMERS_AVAILABLE:
+            logger.warning("Qdrant or Transformers not available, using simple fallback")
             self.fallback_manager = SimpleRAGDocumentManager()
             self.use_fallback = True
             return
             
-        # Try to initialize ChromaDB but fallback on any error
+        # Try to initialize Qdrant but fallback on any error
         try:
-            # Initialize ChromaDB
-            self.chroma_client = chromadb.PersistentClient(
-                path="./data/chroma_db",
-                settings=Settings(
-                    anonymized_telemetry=False,
-                    allow_reset=True
-                )
+            # Qdrant Cloud credentials
+            QDRANT_CLUSTER_ID = "5a605d9d-3f4c-4582-a9c8-ca6b181dab19"
+            QDRANT_API_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJhY2Nlc3MiOiJtIn0.Z61LzoC-0r55u6TOTNGDvV4z8NM8KUnZE35pSgoA-9g"
+            QDRANT_URL = f"https://{QDRANT_CLUSTER_ID}.eu-west-2-0.aws.cloud.qdrant.io"
+            
+            # Initialize Qdrant client
+            self.qdrant_client = QdrantClient(
+                url=QDRANT_URL,
+                api_key=QDRANT_API_KEY,
+                timeout=30
             )
             
-            # Get or create collection
-            self.collection = self.chroma_client.get_or_create_collection(
-                name="islamic_mental_health_docs",
-                metadata={"description": "Islamic mental health and CBT resources"}
-            )
+            # Collection name
+            self.collection_name = "islamic_mental_health_docs"
             
             # Lazy loading for embedding model - don't load immediately
             self.embedding_model = None
             self.use_fallback = False
             
-            logger.info("ChromaDB initialized successfully")
+            logger.info("Qdrant client initialized successfully")
             
         except Exception as e:
-            logger.error(f"ChromaDB initialization failed: {e}")
+            logger.error(f"Qdrant initialization failed: {e}")
             logger.info("Falling back to simple document manager")
             self.fallback_manager = SimpleRAGDocumentManager()
             self.use_fallback = True
@@ -340,15 +342,50 @@ class RAGDocumentManager:
                 raise e
         return self.embedding_model
     
+    def _ensure_collection_exists(self):
+        """Ensure the Qdrant collection exists with proper configuration"""
+        try:
+            # Check if collection exists
+            collections = self.qdrant_client.get_collections()
+            collection_names = [c.name for c in collections.collections]
+            
+            if self.collection_name not in collection_names:
+                logger.info(f"Creating Qdrant collection: {self.collection_name}")
+                
+                # Create collection with proper vector configuration
+                # We need to determine vector size from our embedding model
+                model = self._get_embedding_model()
+                test_embedding = model.encode("test").tolist() 
+                vector_size = len(test_embedding)
+                
+                self.qdrant_client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=VectorParams(
+                        size=vector_size,
+                        distance=Distance.COSINE
+                    )
+                )
+                logger.info(f"Collection created with vector size: {vector_size}")
+            else:
+                logger.info(f"Collection {self.collection_name} already exists")
+                
+        except Exception as e:
+            logger.error(f"Error ensuring collection exists: {e}")
+            raise e
+    
     def _initialize_documents(self):
         """Initialize the document store if it's empty"""
         try:
+            # Ensure collection exists first
+            self._ensure_collection_exists()
+            
             # Check if collection has any documents
-            if self.collection.count() == 0:
+            collection_info = self.qdrant_client.get_collection(self.collection_name)
+            if collection_info.points_count == 0:
                 logger.info("Document store is empty. Initializing with sample content...")
                 self._load_sample_content()
             else:
-                logger.info(f"Document store initialized with {self.collection.count()} documents")
+                logger.info(f"Document store initialized with {collection_info.points_count} documents")
         except Exception as e:
             logger.error(f"Error initializing documents: {e}")
             self._load_sample_content()
@@ -471,19 +508,24 @@ class RAGDocumentManager:
                 logger.error(f"Encoding failed for document {i+1}: {e}")
                 continue  # Skip this document
             
-            # Add to ChromaDB
-            self.collection.add(
-                ids=[doc_id],
-                embeddings=[embedding],
-                documents=[content["text"]],
-                metadatas=[{
+            # Add to Qdrant
+            point = PointStruct(
+                id=str(uuid.uuid4()),
+                vector=embedding,
+                payload={
+                    "content": content["text"],
                     "source": content["source"],
                     "topic": content["topic"],
                     "emotion_relevance": ",".join(content["emotion_relevance"])
-                }]
+                }
+            )
+            
+            self.qdrant_client.upsert(
+                collection_name=self.collection_name,
+                points=[point]
             )
         
-        logger.info(f"Loaded {len(sample_content)} sample documents into ChromaDB")
+        logger.info(f"Loaded {len(sample_content)} sample documents into Qdrant")
     
     def _ensure_documents_initialized(self):
         """Ensure documents are initialized on first access"""
@@ -505,30 +547,37 @@ class RAGDocumentManager:
             model = self._get_embedding_model()
             query_embedding = model.encode(query).tolist()
             
-            # Prepare where clause for emotion filtering
-            where_clause = None
+            # Prepare filter for emotion filtering if specified
+            query_filter = None
             if emotion and emotion != "neutral":
-                # Use proper ChromaDB where clause syntax
-                where_clause = {"emotion_relevance": {"$contains": emotion}}
+                query_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="emotion_relevance",
+                            match=models.MatchText(text=emotion)
+                        )
+                    ]
+                )
             
-            # Query ChromaDB
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                where=where_clause
+            # Query Qdrant
+            results = self.qdrant_client.search(
+                collection_name=self.collection_name,
+                query_vector=query_embedding,
+                query_filter=query_filter,
+                limit=top_k,
+                with_payload=True
             )
             
             # Format results
             documents = []
-            if results["documents"] and results["documents"][0]:
-                for i in range(len(results["documents"][0])):
-                    doc = {
-                        "content": results["documents"][0][i],
-                        "source": results["metadatas"][0][i].get("source", "Unknown"),
-                        "topic": results["metadatas"][0][i].get("topic", "general"),
-                        "distance": results["distances"][0][i] if results.get("distances") else 0
-                    }
-                    documents.append(doc)
+            for result in results:
+                doc = {
+                    "content": result.payload.get("content", ""),
+                    "source": result.payload.get("source", "Unknown"),
+                    "topic": result.payload.get("topic", "general"),
+                    "distance": result.score
+                }
+                documents.append(doc)
             
             logger.info(f"Retrieved {len(documents)} relevant documents for query: {query[:50]}...")
             return documents
@@ -560,16 +609,24 @@ class RAGDocumentManager:
                 logger.error(f"Encoding failed: {e}")
                 return False
             
-            # Add to ChromaDB
-            self.collection.add(
-                ids=[doc_id],
-                embeddings=[embedding],
-                documents=[text],
-                metadatas=[{
+            # Ensure collection exists
+            self._ensure_collection_exists()
+            
+            # Add to Qdrant
+            point = PointStruct(
+                id=str(uuid.uuid4()),
+                vector=embedding,
+                payload={
+                    "content": text,
                     "source": source,
                     "topic": topic,
                     "emotion_relevance": ",".join(emotion_relevance)
-                }]
+                }
+            )
+            
+            self.qdrant_client.upsert(
+                collection_name=self.collection_name,
+                points=[point]
             )
             
             logger.info(f"Added document from {source}")
@@ -586,7 +643,8 @@ class RAGDocumentManager:
             return self.fallback_manager.get_document_count()
             
         try:
-            return self.collection.count()
+            collection_info = self.qdrant_client.get_collection(self.collection_name)
+            return collection_info.points_count
         except Exception as e:
             logger.error(f"Error getting document count: {e}")
             # Switch to fallback on error
@@ -604,25 +662,35 @@ class RAGDocumentManager:
             return self.fallback_manager.search_by_emotion(emotion, limit)
             
         try:
-            # Use query instead of get for better compatibility
-            results = self.collection.query(
-                query_texts=[emotion],  # Use emotion as query text
-                n_results=limit
-                # Remove the where clause for now to avoid $contains issue
+            # Initialize documents if needed
+            self._ensure_documents_initialized()
+            
+            # Create filter for emotion search
+            emotion_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="emotion_relevance",
+                        match=models.MatchText(text=emotion)
+                    )
+                ]
+            )
+            
+            # Search using scroll to get all matching documents
+            results = self.qdrant_client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=emotion_filter,
+                limit=limit,
+                with_payload=True
             )
             
             documents = []
-            if results["documents"] and results["documents"][0]:
-                for i in range(len(results["documents"][0])):
-                    # Filter by emotion relevance manually
-                    emotion_relevance = results["metadatas"][0][i].get("emotion_relevance", "")
-                    if emotion in emotion_relevance:
-                        doc = {
-                            "content": results["documents"][0][i],
-                            "source": results["metadatas"][0][i].get("source", "Unknown"),
-                            "topic": results["metadatas"][0][i].get("topic", "general")
-                        }
-                        documents.append(doc)
+            for point in results[0]:  # results is a tuple (points, next_page_offset)
+                doc = {
+                    "content": point.payload.get("content", ""),
+                    "source": point.payload.get("source", "Unknown"),
+                    "topic": point.payload.get("topic", "general")
+                }
+                documents.append(doc)
             
             return documents
             

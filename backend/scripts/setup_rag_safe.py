@@ -41,7 +41,7 @@ def check_dependencies():
     # Check optional RAG packages
     print("\nChecking RAG dependencies (optional):")
     rag_packages = [
-        ('chromadb', 'chromadb'),
+        ('qdrant-client', 'qdrant_client'),
         ('sentence-transformers', 'sentence_transformers'), 
         ('requests', 'requests'),
         ('beautifulsoup4', 'bs4'),
@@ -109,7 +109,7 @@ def initialize_rag_system_safe():
             print("⚠️ RAG system is running in simple fallback mode")
             print("   This is fine - your app will still work with basic document retrieval")
         else:
-            print("✅ RAG system is running in full ChromaDB mode")
+            print("✅ RAG system is running in full Qdrant mode")
         
         # Skip document count check for safe initialization
         print("📄 Document count: Skipping check during safe initialization")
