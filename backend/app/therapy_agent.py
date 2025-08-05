@@ -4,6 +4,7 @@ import random
 import time
 import json
 import hashlib
+import re
 from typing import TypedDict, Optional, Dict, List, Any
 from datetime import datetime, timedelta
 
@@ -16,6 +17,33 @@ from app.context_manager import context_manager
 # --- LOGGING SETUP --- #
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# --- RESPONSE CLEANING UTILITY --- #
+def clean_ai_response(text: str) -> str:
+    """Clean AI response from formatting characters like asterisks, dashes, etc."""
+    if not text:
+        return text
+    
+    # Remove asterisks used for bold/emphasis
+    text = re.sub(r'\*+([^*]+)\*+', r'\1', text)
+    
+    # Remove markdown-style headers (### Header, ## Header, # Header)
+    text = re.sub(r'^#+\s*(.+)$', r'\1', text, flags=re.MULTILINE)
+    
+    # Remove dashes used for emphasis or bullets at start of lines
+    text = re.sub(r'^\s*[-–—]\s*', '', text, flags=re.MULTILINE)
+    
+    # Remove excessive underscores
+    text = re.sub(r'_{2,}', '', text)
+    
+    # Clean up multiple spaces and newlines
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r' {2,}', ' ', text)
+    
+    # Remove leading/trailing whitespace
+    text = text.strip()
+    
+    return text
 
 # --- STATE TYPE --- #
 class TherapyState(TypedDict, total=False):
@@ -611,6 +639,7 @@ For "How are you?" questions:
 Respond genuinely and warmly based on their message and memory context."""
         
         reply = model.generate_content(greeting_prompt).text.strip()
+        reply = clean_ai_response(reply)  # Clean formatting
         state["response"] = reply
         logging.info(f"Greeting response: {reply}")
         return state
@@ -737,6 +766,7 @@ User's situation: "{user_msg}"
 Generate a complete response following the structure above with plain text formatting only."""
             
             reply = model.generate_content(haram_llm_prompt).text.strip()
+            reply = clean_ai_response(reply)  # Clean formatting
             logging.info(f"LLM-generated haram content response: {reply}")
         else:
             # Use predefined template
@@ -809,6 +839,32 @@ Generate a complete response following the structure above with plain text forma
     else:
         context_content = f"\n\nIslamic teachings remind us that Allah is always with those who seek Him. The Quran and Sunnah provide guidance for all emotional states.\n"
 
+    # Get previously used stories to ensure variety
+    used_stories = get_used_stories(state["user_id"], emotion)
+    
+    # Create variety in response by providing different story options
+    varied_story_guidance = ""
+    if used_stories:
+        varied_story_guidance = f"""
+IMPORTANT: Avoid repeating these Islamic stories that you've already shared with this user for {emotion}:
+{', '.join(used_stories[:5])}
+
+Use a DIFFERENT Islamic story this time from prophets, companions, or early Islamic history that relates to {emotion}.
+"""
+    
+    # Create opening variety
+    opening_variations = [
+        f"Hi {name}, I can feel the weight you're carrying.",
+        f"Hello {name}, I understand you're going through {emotion} right now.",
+        f"{name}, your heart is speaking, and I'm here to listen.",
+        f"Peace be upon you {name}, I sense you're struggling with {emotion}.",
+        f"{name}, sometimes the heart needs space to breathe.",
+        f"Hello {name}, Allah sees your struggle even when others don't.",
+        f"{name}, every storm in the heart eventually finds its calm."
+    ]
+    
+    random_opening = random.choice(opening_variations)
+    
     # Intelligent emotional response system with holistic CBT techniques
     prompt = f"""
 You are Mustafa, an Islamic counselor specializing in Islamic CBT techniques.
@@ -818,17 +874,17 @@ Emotion: {emotion}
 Message: "{user_msg}"
 User context: {user_context}
 
-Create an emotionally resonant opening without repeatition (1-2 lines only):
-- "Hi [name], I understand you are [feeling]. Sometimes we chase a flower, but Allah plans to bless us with a whole bouquet."
-- "Hello [name], I feel your weight. Remember, even clouds carry rain that blesses the earth."
+{varied_story_guidance}
+
+Use this opening: "{random_opening}"
 
 Your response MUST follow this format:
 
-[Opening sentence - 1-2 lines max]
+[Use the provided opening sentence]
 
-[Islamic story of prophets, sahabas, seerah etc relevant to user condition - 4-5 lines don't cite the reference and use exact wording of stories but naturally]
+[Choose a UNIQUE Islamic story from prophets, companions, or early Islamic history that relates to {emotion} - 4-5 lines, tell it naturally without citations]
 
-[3-4 practical Islamic CBT techniques - Write them as simple numbered points and not lengthy just 1 to 2 line each: 1. [technique] 2. [technique] 3. [technique] 4. [technique]]
+[3-4 practical Islamic CBT techniques - Write them as simple numbered points: 1. [technique] 2. [technique] 3. [technique] 4. [technique]]
 
 [Hopeful closure - 1-2 lines max]
 
@@ -838,6 +894,12 @@ CRITICAL FORMATTING RULES:
 |- Each technique concise and action-oriented
 |- Keep response under 200 words total
 |- Don't write reference for what you are citing
+
+Story variety examples for {emotion}:
+- If sad: Stories of Prophet Yaqoob (AS), Prophet Ayyub (AS), Companions dealing with loss, etc.
+- If anxious: Stories of Prophet Musa (AS) at the sea, Prophet Ibrahim (AS) facing tests, etc.
+- If lonely: Stories of Prophet Yunus (AS), early Muslim converts who were isolated, etc.
+- If hopeless: Stories of Prophet Yusuf (AS) in prison, early Muslim persecutions turning to victory, etc.
 
 Techniques might include:
 - Dhikr and short du'as for mindfulness
@@ -852,6 +914,32 @@ Frame your response as heartfelt advice from someone grounded in Islamic wisdom 
     else:
         prompt += "\n(Respond warmly in English.)"
     reply = model.generate_content(prompt).text.strip()
+    reply = clean_ai_response(reply)  # Clean formatting
+    
+    # Extract and track the story used to prevent repetition
+    try:
+        # Simple heuristic to identify the story portion (second paragraph typically)
+        story_lines = reply.split('\n')
+        story_content = ""
+        
+        # Find the story portion (usually between first and second blank lines)
+        in_story = False
+        story_parts = []
+        for i, line in enumerate(story_lines):
+            if i > 0 and line.strip() and not in_story:  # Start of story
+                in_story = True
+                story_parts.append(line.strip()[:50])  # First 50 chars as identifier
+            elif in_story and (line.strip().startswith('1.') or line.strip() == ''):  # End of story
+                break
+            elif in_story and line.strip():
+                story_parts.append(line.strip()[:50])
+        
+        if story_parts:
+            story_key = " ".join(story_parts)[:100]  # Use first 100 chars as unique identifier
+            mark_story_used(state["user_id"], emotion, story_key)
+            logging.info(f"Marked story as used for {emotion}: {story_key[:50]}...")
+    except Exception as e:
+        logging.warning(f"Failed to track story usage: {e}")
 
     # Attach relevant dua if necessary
     dua_info = state.get("dua")
@@ -913,6 +1001,31 @@ def set_user_memory(state: TherapyState) -> TherapyState:
     state["name"] = memory[uid].get("name", "Friend")
     
     return state
+
+# Add a function to track and vary responses
+def get_used_stories(user_id: str, emotion: str) -> list:
+    """Get previously used stories for this user and emotion"""
+    if user_id not in memory:
+        return []
+    # Get or create story tracking
+    if "used_stories" not in memory[user_id]:
+        memory[user_id]["used_stories"] = {}
+    if emotion not in memory[user_id]["used_stories"]:
+        memory[user_id]["used_stories"][emotion] = []
+    return memory[user_id]["used_stories"][emotion]
+
+def mark_story_used(user_id: str, emotion: str, story_key: str):
+    """Mark a story as used for this user and emotion"""
+    if user_id not in memory:
+        return
+    if "used_stories" not in memory[user_id]:
+        memory[user_id]["used_stories"] = {}
+    if emotion not in memory[user_id]["used_stories"]:
+        memory[user_id]["used_stories"][emotion] = []
+    memory[user_id]["used_stories"][emotion].append(story_key)
+    # Keep only last 10 used stories to allow eventual reuse
+    if len(memory[user_id]["used_stories"][emotion]) > 10:
+        memory[user_id]["used_stories"][emotion] = memory[user_id]["used_stories"][emotion][-10:]
 
 def get_user_context(user_id: str) -> str:
     """Get user context for prompts"""
