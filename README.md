@@ -1,4 +1,4 @@
-# QalbCare - Islamic Mental Health & Therapy App
+# QalbCare -- Islamic Mental Health & Therapy App
 
 <div align="center">
 
